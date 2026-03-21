@@ -587,6 +587,19 @@ _C.OUTPUT_DIR = "."
 _C.DETECTED_SGG_DIR = "."
 _C.GLOVE_DIR = "."
 
+# CB-Loss (Class-Balanced Loss) settings
+_C.MODEL.reweight_fineloss = False
+_C.MODEL.num_beta = 0.9999
+
+# CATM (Class-specific Adaptive Thresholding with Momentum) for pseudo-labeling
+_C.MODEL.CATM_ENABLE = False
+_C.MODEL.CATM_THRESHOLD = 0.4       # initial confidence threshold for pseudo-labels
+_C.MODEL.CATM_MOMENTUM_INC = 0.999  # EMA momentum for increasing threshold
+_C.MODEL.CATM_MOMENTUM_DEC = 0.99   # EMA momentum for decreasing threshold
+_C.MODEL.CATM_PSEUDO_WEIGHT = 0.5   # weight for pseudo-label loss relative to real loss
+_C.MODEL.CATM_WARMUP_ITER = 2000    # iterations before starting pseudo-labeling
+
+
 _C.PATHS_CATALOG = os.path.join(os.path.dirname(__file__), "paths_catalog.py")
 _C.PATHS_DATA = os.path.join(os.path.dirname(__file__), "../data/datasets")
 

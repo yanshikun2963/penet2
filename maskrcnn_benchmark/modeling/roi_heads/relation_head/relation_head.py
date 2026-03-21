@@ -13,15 +13,12 @@ from .sampling import make_roi_relation_samp_processor
 
 class ROIRelationHead(torch.nn.Module):
     """
-    Generic Relation Head class.
+    Generic Relation Head class with optional CATM pseudo-labeling.
     """
 
     def __init__(self, cfg, in_channels):
         super(ROIRelationHead, self).__init__()
         self.cfg = cfg.clone()
-        # same structure with box head, but different parameters
-        # these param will be trained in a slow learning rate, while the parameters of box head will be fixed
-        # Note: there is another such extractor in uniton_feature_extractor
         self.union_feature_extractor = make_roi_relation_feature_extractor(cfg, in_channels)
         if cfg.MODEL.ATTRIBUTE_ON:
             self.box_feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=True)
@@ -38,22 +35,23 @@ class ROIRelationHead(torch.nn.Module):
         # parameters
         self.use_union_box = self.cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
 
-    def forward(self, features, proposals, targets=None, logger=None):
-        """
-        Arguments:
-            features (list[Tensor]): feature-maps from possibly several levels
-            proposals (list[BoxList]): proposal boxes. Note: it has been post-processed (regression, nms) in sgdet mode
-            targets (list[BoxList], optional): the ground-truth targets.
+        # CATM pseudo-labeling
+        self.catm = None
+        if hasattr(cfg.MODEL, 'CATM_ENABLE') and cfg.MODEL.CATM_ENABLE:
+            from .catm import CATMPseudoLabeler
+            self.catm = CATMPseudoLabeler(
+                num_classes=cfg.MODEL.ROI_RELATION_HEAD.NUM_CLASSES,
+                init_threshold=cfg.MODEL.CATM_THRESHOLD,
+                momentum_inc=cfg.MODEL.CATM_MOMENTUM_INC,
+                momentum_dec=cfg.MODEL.CATM_MOMENTUM_DEC,
+                pseudo_weight=cfg.MODEL.CATM_PSEUDO_WEIGHT,
+                warmup_iter=cfg.MODEL.CATM_WARMUP_ITER,
+            )
+        self._iteration = 0
 
-        Returns:
-            x (Tensor): the result of the feature extractor
-            proposals (list[BoxList]): during training, the subsampled proposals
-                are returned. During testing, the predicted boxlists are returned
-            losses (dict[Tensor]): During training, returns the losses for the
-                head. During testing, returns an empty dict.
-        """
+    def forward(self, features, proposals, targets=None, logger=None):
         if self.training:
-            # relation subsamples and assign ground truth label during training
+            self._iteration += 1
             with torch.no_grad():
                 if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
                     proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.gtbox_relsample(proposals, targets)
@@ -63,7 +61,6 @@ class ROIRelationHead(torch.nn.Module):
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.samp_processor.prepare_test_pairs(features[0].device, proposals)
 
-        # use box_head to extract features that will be fed to the later predictor processing
         roi_features = self.box_feature_extractor(features, proposals)
 
         if self.cfg.MODEL.ATTRIBUTE_ON:
@@ -75,9 +72,8 @@ class ROIRelationHead(torch.nn.Module):
         else:
             union_features = None
         
-        # final classifier that converts the features into predictions
-        # should corresponding to all the functions and layers after the self.context class
-        refine_logits, relation_logits, add_losses, add_data = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger)
+        refine_logits, relation_logits, add_losses, add_data = self.predictor(
+            proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger)
 
         # for test
         if not self.training:
@@ -88,18 +84,23 @@ class ROIRelationHead(torch.nn.Module):
 
         if self.cfg.MODEL.ATTRIBUTE_ON and isinstance(loss_refine, (list, tuple)):
             output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine[0], loss_refine_att=loss_refine[1])
+        elif hasattr(self.cfg.MODEL, 'reweight_fineloss') and self.cfg.MODEL.reweight_fineloss:
+            output_losses = dict(loss_refine_obj=loss_refine)
         else:
             output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
 
         output_losses.update(add_losses)
 
+        # CATM pseudo-labeling: assign pseudo-labels to background pairs
+        if self.catm is not None and self.training:
+            cls_weight = getattr(self.predictor, 'final_cls_weight', None)
+            pseudo_loss, num_pseudo = self.catm.compute_pseudo_loss(
+                relation_logits, rel_labels, self._iteration, cls_weight)
+            if num_pseudo > 0:
+                output_losses['loss_pseudo'] = pseudo_loss
+
         return roi_features, proposals, output_losses
 
 
 def build_roi_relation_head(cfg, in_channels):
-    """
-    Constructs a new relation head.
-    By default, uses ROIRelationHead, but if it turns out not to be enough, just register a new class
-    and make it a parameter in the config
-    """
     return ROIRelationHead(cfg, in_channels)

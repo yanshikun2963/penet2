@@ -128,6 +128,14 @@ class PrototypeEmbeddingNetwork(nn.Module):
         
         self.nms_thresh = self.cfg.TEST.RELATION.LATER_NMS_PREDICTION_THRES
 
+        # CB-Loss: Class-Balanced Loss weights for long-tail re-weighting
+        if hasattr(self.cfg.MODEL, 'reweight_fineloss') and self.cfg.MODEL.reweight_fineloss:
+            beta = self.cfg.MODEL.num_beta
+            self.final_cls_weight = torch.FloatTensor(
+                weight_calculate(beta, rel_num)).cuda()
+        else:
+            self.final_cls_weight = None
+
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
 
@@ -241,6 +249,13 @@ class PrototypeEmbeddingNetwork(nn.Module):
             loss_sum = torch.max(torch.zeros(rel_labels.size(0)).cuda(), distance_set_pos - topK_sorted_distance_set_neg + gamma1).mean()
             add_losses.update({"loss_dis": loss_sum})     # Le_euc = max(0, (g+) - (g-) + gamma1)
             ### end 
+
+            ### CB-Loss: Class-Balanced weighted cross-entropy
+            if self.final_cls_weight is not None:
+                loss_rw = F.cross_entropy(
+                    cat(rel_dists, dim=0), rel_labels, self.final_cls_weight)
+                add_losses.update({"loss_rw": loss_rw})
+            ### end
  
         return entity_dists, rel_dists, add_losses, add_data
 
@@ -985,6 +1000,20 @@ class CausalAnalysisPredictor(nn.Module):
 
     def fusion(self, x, y):
         return F.relu(x + y) - (x - y) ** 2
+
+
+# VG relation frequency counts (for CB-Loss weight calculation)
+rel_num = torch.tensor([6144612,    5799,     226,     172,     435,     570,    1378, 1178,   11074,     553,     449,
+                        1024,     396,     421, 426,       5,     897,     174,     150,     638,   49772, 7293,
+                        16957,    3187,     469,     764,     207,      88, 212,   16855,   25549,   85620,     264,
+                        1070,     121, 516,     349,      94,    2451,      27,    3428,    1752, 283,    3774,
+                        333,     213,     991,     774,   32776, 3454,    9286])
+
+def weight_calculate(beta, REL_SAMPLES):
+    effective_num = 1.0 - np.power(beta, REL_SAMPLES)
+    weights = (1 - beta) / np.array(effective_num)
+    weights = weights / np.sum(weights) * len(REL_SAMPLES)
+    return weights
 
 
 def make_roi_relation_predictor(cfg, in_channels):
