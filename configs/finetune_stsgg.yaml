@@ -115,7 +115,7 @@ SOLVER:
   SCHEDULE:
     TYPE: "WarmupMultiStepLR"
   PRE_VAL: False
-OUTPUT_DIR: './checkpoints/finetune_stsgg'
+OUTPUT_DIR: '/root/autodl-tmp/penet2/checkpoints/finetune_stsgg'
 TEST:
   ALLOW_LOAD_FROM_CACHE: False
   RELATION:

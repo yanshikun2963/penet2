@@ -26,7 +26,7 @@ stdbuf -oL python3 tools/relation_test_net.py \
   MODEL.ROI_RELATION_HEAD.PREDICTOR PrototypeEmbeddingNetwork \
   DTYPE "float32" \
   TEST.IMS_PER_BATCH 1 \
-  GLOVE_DIR ./datasets/vg/ \
+  GLOVE_DIR /root/autodl-tmp/penet-main/Datasets/VG/ \
   MODEL.PRETRAINED_DETECTOR_CKPT ${CKPT} \
   OUTPUT_DIR ${OUTPUT_DIR} \
   MODEL.WEIGHT ${CKPT} \

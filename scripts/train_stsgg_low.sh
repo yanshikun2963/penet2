@@ -7,15 +7,15 @@
 set -e
 
 # ===== 你需要修改的路径 =====
-STRONG_BASE_CKPT="./checkpoints/PE-NET_Reweight_PredCls_beta9999/model_0032000.pth"
-DETECTOR_CKPT="./checkpoints/pretrained_faster_rcnn/model_final.pth"
-GLOVE="./datasets/vg/"
+STRONG_BASE_CKPT="/root/autodl-tmp/penet-main/checkpoints/PE-NET_Reweight_PredCls_beta9999/model_0032000.pth"
+DETECTOR_CKPT="/root/autodl-tmp/penet-main/Datasets/VG/model_final.pth"
+GLOVE="/root/autodl-tmp/penet-main/Datasets/VG/"
 
 # ===== 实验参数 =====
 MAX_ITER=30000
 LR=0.0001
 STEPS="(18000,24000)"
-OUTPUT_DIR="./checkpoints/finetune_stsgg_low"
+OUTPUT_DIR="/root/autodl-tmp/penet2/checkpoints/finetune_stsgg_low"
 MODEL_NAME="Exp-B-STSGG-thresh0.3"
 
 # ===== 环境变量 =====
