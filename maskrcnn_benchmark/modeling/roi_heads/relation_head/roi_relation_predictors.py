@@ -131,8 +131,11 @@ class PrototypeEmbeddingNetwork(nn.Module):
         # CB-Loss: Class-Balanced Loss weights for long-tail re-weighting
         if hasattr(self.cfg.MODEL, 'reweight_fineloss') and self.cfg.MODEL.reweight_fineloss:
             beta = self.cfg.MODEL.num_beta
+            # Apply cut_rels lower bound (matches strong base training)
+            sample_num = rel_num.clone()
+            sample_num[sample_num < 200] = 200
             self.final_cls_weight = torch.FloatTensor(
-                weight_calculate(beta, rel_num)).cuda()
+                weight_calculate(beta, sample_num)).cuda()
         else:
             self.final_cls_weight = None
 
