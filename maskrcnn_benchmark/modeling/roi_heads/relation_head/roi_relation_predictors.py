@@ -104,8 +104,9 @@ class PrototypeEmbeddingNetwork(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        # CosFace additive angular margin for prototype matching
-        self.cosface_margin = 0.15  # margin m subtracted from GT class cosine similarity
+        ##### CosFace Additive Margin
+        self.cosface_margin = 0.15  # margin m: subtracted from GT class cosine similarity during training
+        #####
 
         ##### refine object labels
         self.pos_embed = nn.Sequential(*[
@@ -203,15 +204,18 @@ class PrototypeEmbeddingNetwork(nn.Module):
         predicate_proto_norm = predicate_proto / predicate_proto.norm(dim=1, keepdim=True)  # c_norm
 
         ### (Prototype-based Learning  ---- cosine similarity) & (Relation Prediction)
-        cosine_sim = rel_rep_norm @ predicate_proto_norm.t()  # raw cosine similarity
+        cos_sim = rel_rep_norm @ predicate_proto_norm.t()  # raw cosine similarity
         
-        # Apply CosFace additive angular margin during training
+        ##### CosFace: subtract margin from GT class during training
         if self.training:
             rel_labels_flat = cat(rel_labels, dim=0)
-            one_hot = torch.zeros_like(cosine_sim).scatter_(1, rel_labels_flat.unsqueeze(1).long(), 1.0)
-            cosine_sim = cosine_sim - one_hot * self.cosface_margin  # subtract margin from GT class
-        
-        rel_dists = cosine_sim * self.logit_scale.exp()  #  scale by temperature
+            one_hot = torch.zeros_like(cos_sim)
+            one_hot.scatter_(1, rel_labels_flat.unsqueeze(1).long(), 1.0)
+            cos_sim_margined = cos_sim - self.cosface_margin * one_hot
+            rel_dists = cos_sim_margined * self.logit_scale.exp()
+        else:
+            rel_dists = cos_sim * self.logit_scale.exp()
+        #####
         # the rel_dists will be used to calculate the Le_sim with the ce_loss
 
         entity_dists = entity_dists.split(num_objs, dim=0)
