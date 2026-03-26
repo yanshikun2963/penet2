@@ -104,9 +104,17 @@ class PrototypeEmbeddingNetwork(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        ##### CosFace Additive Margin
-        self.cosface_margin = 0.15  # margin m: subtracted from GT class cosine similarity during training
+        ##### DisAlign: Per-class affine logit calibration
+        # Learns per-class scale and bias to calibrate cosine similarity scores
+        self.disalign_alpha = nn.Parameter(torch.zeros(self.num_rel_cls))  # magnitude
+        self.disalign_beta = nn.Parameter(torch.zeros(self.num_rel_cls))   # margin
+        # Confidence gate: input-dependent scaling
+        self.disalign_gate = nn.Sequential(
+            nn.Linear(self.mlp_dim * 2, 1),  # maps projected rel_rep to confidence scalar
+            nn.Sigmoid()
+        )
         #####
+
 
         ##### refine object labels
         self.pos_embed = nn.Sequential(*[
@@ -204,18 +212,10 @@ class PrototypeEmbeddingNetwork(nn.Module):
         predicate_proto_norm = predicate_proto / predicate_proto.norm(dim=1, keepdim=True)  # c_norm
 
         ### (Prototype-based Learning  ---- cosine similarity) & (Relation Prediction)
-        cos_sim = rel_rep_norm @ predicate_proto_norm.t()  # raw cosine similarity
-        
-        ##### CosFace: subtract margin from GT class during training
-        if self.training:
-            rel_labels_flat = cat(rel_labels, dim=0)
-            one_hot = torch.zeros_like(cos_sim)
-            one_hot.scatter_(1, rel_labels_flat.unsqueeze(1).long(), 1.0)
-            cos_sim_margined = cos_sim - self.cosface_margin * one_hot
-            rel_dists = cos_sim_margined * self.logit_scale.exp()
-        else:
-            rel_dists = cos_sim * self.logit_scale.exp()
-        #####
+        rel_dists = rel_rep_norm @ predicate_proto_norm.t() * self.logit_scale.exp()  #  <r_norm, c_norm> / τ
+        # DisAlign: Apply per-class affine calibration
+        confidence = self.disalign_gate(rel_rep)  # (N, 1) confidence score
+        rel_dists = (1.0 + confidence * self.disalign_alpha.unsqueeze(0)) * rel_dists + confidence * self.disalign_beta.unsqueeze(0)
         # the rel_dists will be used to calculate the Le_sim with the ce_loss
 
         entity_dists = entity_dists.split(num_objs, dim=0)
