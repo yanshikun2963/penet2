@@ -104,17 +104,13 @@ class PrototypeEmbeddingNetwork(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        ##### DisAlign: Per-class affine logit calibration
-        # Learns per-class scale and bias to calibrate cosine similarity scores
-        self.disalign_alpha = nn.Parameter(torch.zeros(self.num_rel_cls))  # magnitude
-        self.disalign_beta = nn.Parameter(torch.zeros(self.num_rel_cls))   # margin
-        # Confidence gate: input-dependent scaling
-        self.disalign_gate = nn.Sequential(
-            nn.Linear(self.mlp_dim * 2, 1),  # maps projected rel_rep to confidence scalar
-            nn.Sigmoid()
-        )
+        ##### Component 2: DisAlign Per-class Affine Logit Calibration
+        self.disalign_alpha = nn.Parameter(torch.zeros(self.num_rel_cls))
+        self.disalign_beta = nn.Parameter(torch.zeros(self.num_rel_cls))
+        self.disalign_gate = nn.Linear(self.mlp_dim * 2, 1)
+        nn.init.zeros_(self.disalign_gate.weight)
+        nn.init.zeros_(self.disalign_gate.bias)
         #####
-
 
         ##### refine object labels
         self.pos_embed = nn.Sequential(*[
@@ -212,10 +208,12 @@ class PrototypeEmbeddingNetwork(nn.Module):
         predicate_proto_norm = predicate_proto / predicate_proto.norm(dim=1, keepdim=True)  # c_norm
 
         ### (Prototype-based Learning  ---- cosine similarity) & (Relation Prediction)
-        rel_dists = rel_rep_norm @ predicate_proto_norm.t() * self.logit_scale.exp()  #  <r_norm, c_norm> / τ
-        # DisAlign: Apply per-class affine calibration
-        confidence = self.disalign_gate(rel_rep)  # (N, 1) confidence score
-        rel_dists = (1.0 + confidence * self.disalign_alpha.unsqueeze(0)) * rel_dists + confidence * self.disalign_beta.unsqueeze(0)
+        rel_dists = rel_rep_norm @ predicate_proto_norm.t() * self.logit_scale.exp()
+        # DisAlign: Per-class affine calibration
+        confidence = torch.sigmoid(self.disalign_gate(rel_rep)).squeeze(-1)
+        alpha_scaled = confidence.unsqueeze(1) * self.disalign_alpha.unsqueeze(0)
+        beta_scaled = confidence.unsqueeze(1) * self.disalign_beta.unsqueeze(0)
+        rel_dists = (1.0 + alpha_scaled) * rel_dists + beta_scaled
         # the rel_dists will be used to calculate the Le_sim with the ce_loss
 
         entity_dists = entity_dists.split(num_objs, dim=0)
@@ -256,6 +254,7 @@ class PrototypeEmbeddingNetwork(nn.Module):
             loss_sum = torch.max(torch.zeros(rel_labels.size(0)).cuda(), distance_set_pos - topK_sorted_distance_set_neg + gamma1).mean()
             add_losses.update({"loss_dis": loss_sum})     # Le_euc = max(0, (g+) - (g-) + gamma1)
             ### end 
+
  
         return entity_dists, rel_dists, add_losses, add_data
 
